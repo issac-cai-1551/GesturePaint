@@ -8,6 +8,8 @@ import time
 import threading
 import queue
 
+from src.features.smart_voice_controller import SmartVoiceController
+# from src.features.voice_ui import VoiceUI
 from src.utils.SuppressStderr import SuppressStderr
 
 from PIL import Image
@@ -23,6 +25,7 @@ from src.utils.coordinates import CoordinateMapper
 from src.features.custom_dialog import CustomDialog,OptionDialog
 from src.features.doodle_to_art_system import DoodleToArtConverter
 from src.features.dialog_manager import DialogManager
+from src.features.voice_recognition import RealtimeVoiceController
 import os
 
 
@@ -72,12 +75,27 @@ class AirPaintingApp:
         self.is_paused = False
         self.dialog_manager = DialogManager(self.screen_width, self.screen_height)
         self.last_camera_surface = None
+
+        # 最近保存的图片文件
+        self.last_save_filename = None
         
         # 艺术生成任务管理
         self.processing_tasks = [] # 存储所有任务状态，用于UI显示
         self.task_queue = queue.Queue() # 任务队列
         # 启动后台处理线程
         threading.Thread(target=self.art_worker, daemon=True).start()
+
+        # 语音识别相关
+        self.voice_controller = RealtimeVoiceController(
+            on_result_callback=self.handle_voice_command
+        )
+        self.voice_active = False
+        self.voice_thread = None
+
+
+        # 新增特效状态
+        self.active_effect = None
+        self.special_brush = False
 
         # 字体
         self.font = pygame.font.SysFont('simhei', 24)
@@ -94,6 +112,8 @@ class AirPaintingApp:
         self.fps = 40
         # 初始化模块
         self.init_modules()
+
+
 
     def init_modules(self):
         """初始化所有系统模块"""
@@ -129,7 +149,9 @@ class AirPaintingApp:
             # 初始化可视化器
             self.visualizer = Visualizer(self.screen, self.font, self.small_font)
 
+            # 初始化换脸系统
             self.face_swapper = FaceSwapper(self.gesture_commands.current_face_source)
+
 
             # 初始化摄像头
             self.cap = cv2.VideoCapture(0)
@@ -139,6 +161,9 @@ class AirPaintingApp:
             else:
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
+
+            # 启动语音控制系统
+            self.toggle_voice_control()
 
             print("系统初始化完成")
 
@@ -204,6 +229,8 @@ class AirPaintingApp:
             current_size = self.brush_engine.brush.size
             self.brush_engine.change_size(current_size - 2)
             print(f"笔刷大小: {self.brush_engine.brush.size}")
+        elif key == pygame.K_v:  # V键切换语音控制
+            self.toggle_voice_control()
 
     def save_drawing_with_dialog(self):
         """保存画布并显示对话框"""
@@ -216,6 +243,7 @@ class AirPaintingApp:
             success = self.canvas_manager.save_canvas(filename)
 
             if success:
+                self.last_save_filename = filename
                 # 显示确认对话框
                 self.dialog_manager.show_save_confirm(
                     filename,
@@ -647,8 +675,6 @@ class AirPaintingApp:
         #显示笔刷预览
         self.visualizer.draw_brush_preview(self.brush_engine.brush,(self.camera_width+20+self.canvas_width//2,100))
 
-
-
         # 更新显示
         pygame.display.flip()
 
@@ -668,6 +694,127 @@ class AirPaintingApp:
         except Exception as e:
             print(f"艺术化转换失败: {e}")
 
+    # 在main.py中完善语音命令处理函数
+    def handle_voice_command(self, text, start_time, end_time):
+        """统一处理语音命令"""
+        text = text.lower().strip()
+
+        # 控制类命令
+        if any(cmd in text for cmd in ["保存", "存下来", "保存画布"]):
+            self.save_drawing_with_dialog()
+        elif any(cmd in text for cmd in ["暂停", "停止", "等一下"]):
+            self.is_paused = True
+            print("系统已暂停")
+        elif any(cmd in text for cmd in ["恢复", "继续", "开始"]):
+            self.is_paused = False
+            print("系统已恢复")
+        elif any(cmd in text for cmd in ["清空", "清除", "重置"]):
+            self.canvas_manager.clear_canvas()
+            print("画布已清空")
+        elif any(cmd in text for cmd in ["撤销", "回退", "上一步"]):
+            self.canvas_manager.undo()
+            print("已撤销")
+
+        # 笔刷控制
+        elif "红色" in text:
+            self.brush_engine.change_color('red')
+            print("笔刷切换为红色")
+        elif "蓝色" in text:
+            self.brush_engine.change_color('blue')
+            print("笔刷切换为蓝色")
+        elif "绿色" in text:
+            self.brush_engine.change_color('green')
+            print("笔刷切换为绿色")
+        elif "黑色" in text:
+            self.brush_engine.change_color('black')
+            print("笔刷切换为黑色")
+
+        # 笔刷大小
+        elif any(cmd in text for cmd in ["大点", "粗点", "增大" , "变大" , "变粗"]):
+            current = self.brush_engine.brush.size
+            self.brush_engine.change_size(min(50, current + 5))
+            print(f"笔刷增大到 {self.brush_engine.brush.size}")
+        elif any(cmd in text for cmd in ["小点", "细点", "减小" , "变小" , "变细"]):
+            current = self.brush_engine.brush.size
+            self.brush_engine.change_size(max(1, current - 5))
+            print(f"笔刷减小到 {self.brush_engine.brush.size}")
+
+    def toggle_voice_control(self):
+        """切换语音控制状态"""
+        if not self.voice_controller:
+            print("语音识别器未初始化")
+            return
+
+        if not self.voice_active:
+            try:
+                # 在新线程中启动语音识别
+                import threading
+                self.voice_thread = threading.Thread(
+                    target=self.voice_controller.start,
+                    daemon=True
+                )
+                self.voice_thread.start()
+                self.voice_active = True
+                print("🔊 语音控制已启用")
+            except Exception as e:
+                print(f"启动语音控制失败: {e}")
+                self.voice_active = False
+        else:
+            try:
+                self.voice_controller.stop()
+                self.voice_active = False
+                print("🔇 语音控制已关闭")
+            except Exception as e:
+                print(f"关闭语音控制失败: {e}")
+
+    def save_current_doodle(self):
+        try:
+            # 暂停手势识别
+            self.is_paused = True
+
+            # 保存图片
+            filename = f"drawing_{int(time.time())}"
+            success = self.canvas_manager.save_canvas(filename)
+
+            if success:
+                self.last_save_filename = filename
+            else:
+                print("保存失败")
+                self.is_paused = False
+
+        except Exception as e:
+            print(f"保存失败: {e}")
+            self.is_paused = False
+
+    def draw_voice_panel(self):
+        """绘制语音控制面板"""
+        panel_x = self.screen_width - 450
+        panel_y = 20
+
+        # 语音面板背景
+        pygame.draw.rect(self.screen, (40, 40, 60),
+                         (panel_x, panel_y, 420, 180), border_radius=15)
+
+        # 标题
+        title = self.font.render("语音控制面板", True, (220, 220, 255))
+        self.screen.blit(title, (panel_x + 20, panel_y + 10))
+
+
+        # 语音命令列表
+        y_offset = panel_y + 160
+        voice_commands = [
+            "🎤 说'保存' - 保存画布",
+            "🎨 说'画一个...' - 创意绘画",
+            "🔄 说'切换颜色' - 改变笔刷",
+            "📐 说'大一点' - 增大笔刷",
+            "🗑️ 说'清空' - 清除画布",
+            "⏸️ 说'暂停/恢复' - 控制系统"
+        ]
+
+        for i, cmd in enumerate(voice_commands):
+            text = self.small_font.render(cmd, True, (180, 180, 200))
+            self.screen.blit(text, (panel_x + 20, y_offset + i * 25))
+
 
     def run(self):
         """主循环"""
@@ -677,6 +824,8 @@ class AirPaintingApp:
         while self.running:
             # 处理事件
             self.handle_events()
+
+
             # 如果有活动对话框，只更新对话框
             if self.dialog_manager.is_active():
                 # 绘制背景（但不更新摄像头）

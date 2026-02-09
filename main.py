@@ -8,7 +8,7 @@ import time
 import threading
 import queue
 
-from src.features.smart_voice_controller import SmartVoiceController
+# from src.features.smart_voice_controller import SmartVoiceController
 # from src.features.voice_ui import VoiceUI
 from src.utils.SuppressStderr import SuppressStderr
 
@@ -24,7 +24,7 @@ from src.utils.visualizer import Visualizer
 from src.utils.coordinates import CoordinateMapper
 from src.features.custom_dialog import CustomDialog,OptionDialog
 from src.features.doodle_to_art_system import DoodleToArtConverter
-from src.features.dialog_manager import DialogManager
+from src.features.dialog_manager import DialogManager, DialogState
 from src.features.voice_recognition import RealtimeVoiceController
 import os
 
@@ -34,6 +34,7 @@ class AirPaintingApp:
         # 初始化Pygame
 
         pygame.init()
+        pygame.key.start_text_input()#实现中文输入
 
         # 屏幕设置
         self.screen_width = 1600
@@ -698,46 +699,93 @@ class AirPaintingApp:
     def handle_voice_command(self, text, start_time, end_time):
         """统一处理语音命令"""
         text = text.lower().strip()
+        if text is None:
+            return
 
-        # 控制类命令
-        if any(cmd in text for cmd in ["保存", "存下来", "保存画布"]):
-            self.save_drawing_with_dialog()
-        elif any(cmd in text for cmd in ["暂停", "停止", "等一下"]):
-            self.is_paused = True
-            print("系统已暂停")
-        elif any(cmd in text for cmd in ["恢复", "继续", "开始"]):
-            self.is_paused = False
-            print("系统已恢复")
-        elif any(cmd in text for cmd in ["清空", "清除", "重置"]):
-            self.canvas_manager.clear_canvas()
-            print("画布已清空")
-        elif any(cmd in text for cmd in ["撤销", "回退", "上一步"]):
-            self.canvas_manager.undo()
-            print("已撤销")
+        state = self.dialog_manager.state
+        # 将语音输入根据输入框状态分为4种情况
+        if state == DialogState.INACTIVE:
+            # 控制类命令
+            if any(cmd in text for cmd in ["保存", "存下来", "保存画布"]):
+                self.save_drawing_with_dialog()
+            elif any(cmd in text for cmd in ["暂停", "停止", "等一下"]):
+                self.is_paused = True
+                print("系统已暂停")
+            elif any(cmd in text for cmd in ["恢复", "继续", "开始"]):
+                self.is_paused = False
+                print("系统已恢复")
+            elif any(cmd in text for cmd in ["清空", "清除", "重置"]):
+                self.canvas_manager.clear_canvas()
+                print("画布已清空")
+            elif any(cmd in text for cmd in ["撤销", "回退", "上一步"]):
+                self.canvas_manager.undo()
+                print("已撤销")
 
-        # 笔刷控制
-        elif "红色" in text:
-            self.brush_engine.change_color('red')
-            print("笔刷切换为红色")
-        elif "蓝色" in text:
-            self.brush_engine.change_color('blue')
-            print("笔刷切换为蓝色")
-        elif "绿色" in text:
-            self.brush_engine.change_color('green')
-            print("笔刷切换为绿色")
-        elif "黑色" in text:
-            self.brush_engine.change_color('black')
-            print("笔刷切换为黑色")
+            # 笔刷控制
+            elif "红色" in text:
+                self.brush_engine.change_color('red')
+                print("笔刷切换为红色")
+            elif "蓝色" in text:
+                self.brush_engine.change_color('blue')
+                print("笔刷切换为蓝色")
+            elif "绿色" in text:
+                self.brush_engine.change_color('green')
+                print("笔刷切换为绿色")
+            elif "黑色" in text:
+                self.brush_engine.change_color('black')
+                print("笔刷切换为黑色")
 
-        # 笔刷大小
-        elif any(cmd in text for cmd in ["大点", "粗点", "增大" , "变大" , "变粗"]):
-            current = self.brush_engine.brush.size
-            self.brush_engine.change_size(min(50, current + 5))
-            print(f"笔刷增大到 {self.brush_engine.brush.size}")
-        elif any(cmd in text for cmd in ["小点", "细点", "减小" , "变小" , "变细"]):
-            current = self.brush_engine.brush.size
-            self.brush_engine.change_size(max(1, current - 5))
-            print(f"笔刷减小到 {self.brush_engine.brush.size}")
+            # 笔刷大小
+            elif any(cmd in text for cmd in ["大点", "粗点", "增大" , "变大" , "变粗"]):
+                current = self.brush_engine.brush.size
+                self.brush_engine.change_size(min(50, current + 5))
+                print(f"笔刷增大到 {self.brush_engine.brush.size}")
+            elif any(cmd in text for cmd in ["小点", "细点", "减小" , "变小" , "变细"]):
+                current = self.brush_engine.brush.size
+                self.brush_engine.change_size(max(1, current - 5))
+                print(f"笔刷减小到 {self.brush_engine.brush.size}")
+
+        elif state == DialogState.SAVE_CONFIRM:
+            event = {}
+            if any(cmd in text for cmd in ["保存", "存下来", "保存画布","确定","确认"]):
+                event["result"] = "OK"
+                print("确定保存")
+            elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+                event["result"] = 'CANCEL'
+                print("保存已取消")
+            self.dialog_manager.handle_event(event)
+
+        elif state == DialogState.STYLE_SELECT:
+            event = {}
+            if any(cmd in text for cmd in ["保存", "存下来", "保存画布", "确定", "确认"]):
+                event["result"] = "OK"
+                print("确定保存")
+            elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+                event["result"] = 'CANCEL'
+                print("保存已取消")
+            self.dialog_manager.handle_event(event)
+
+        elif state == DialogState.STYLE_DIY:
+            event = {}
+            event["result"] = 'None'
+            event["content"] = text
+            if any(cmd in text for cmd in ["保存", "存下来", "保存画布","确定","确认"]):
+                event["result"] = "OK"
+                print("确定保存")
+            elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+                event["result"] = 'CANCEL'
+                print("保存已取消")
+            elif any(cmd in text for cmd in ["清空","全部删除"]):
+                if hasattr(self.dialog_manager.current_dialog,"input_text"):
+                    self.dialog_manager.current_dialog.clear_text()
+            elif any(cmd in text for cmd in ["删除","回退"]):
+                if hasattr(self.dialog_manager.current_dialog,"input_text"):
+                    self.dialog_manager.current_dialog.back_text()
+            else:
+                event["result"] = 'INPUT'
+            self.dialog_manager.handle_event(event)
+
+
 
     def toggle_voice_control(self):
         """切换语音控制状态"""

@@ -1,7 +1,7 @@
 import pygame
 import os
 from pathlib import Path
-
+import sys
 
 class CustomDialog:
     def __init__(self, rect, title, message, font_path=None, font_size=14):
@@ -321,6 +321,7 @@ class OptionDialog(CustomDialog):
             for i, rect in enumerate(self.option_rects):
                 if rect.collidepoint(event.pos):
                     self.selected_option = i
+                    self.result = self.options[self.selected_option]
 
         # 处理按钮点击
         result = super().handle_event(event)
@@ -332,3 +333,282 @@ class OptionDialog(CustomDialog):
             return None
 
         return result
+
+
+from pygame.locals import *
+
+
+class InputDialog(CustomDialog):
+    def __init__(self, rect, title, message="", default_text="", font_path=None, font_size=14):
+        """
+        支持中文输入的自定义输入对话框
+
+        参数:
+            rect: 对话框位置和大小 (pygame.Rect)
+            title: 对话框标题
+            message: 提示信息
+            default_text: 默认文本
+            font_path: 字体文件路径
+            font_size: 字体大小
+        """
+        # 计算合适的高度，留出输入框空间
+        rect.height = max(rect.height, 150)
+        super().__init__(rect, title, message, font_path, font_size)
+
+        # 输入框相关属性
+        self.input_text = default_text
+        self.cursor_visible = True
+        self.cursor_timer = 0
+        self.cursor_blink_interval = 500  # 光标闪烁间隔（毫秒）
+        self.cursor_position = len(self.input_text)  # 光标位置
+
+        # 输入框矩形
+        self.input_rect = pygame.Rect(
+            self.rect.x + 20,
+            self.rect.y + 60,
+            self.rect.width - 40,
+            30
+        )
+
+        # 颜色定义（新增输入框颜色）
+        self.colors.update({
+            'input_bg': (240, 240, 240),
+            'input_border': (100, 100, 100),
+            'input_border_focus': (0, 120, 215),
+            'cursor': (0, 0, 0)
+        })
+
+        # 输入状态
+        self.input_active = True
+        self.input_focus = True
+
+        # 文本滚动相关
+        self.text_offset = 0
+        self.caret_offset = 0
+
+        # 重新计算消息换行（考虑输入框位置）
+        if message:
+            self.message_lines = self.wrap_text(message, self.message_font, self.rect.width - 40)
+            # 调整输入框位置
+            message_height = len(self.message_lines) * 25
+            self.input_rect.y = self.rect.y + 50 + message_height
+            # 调整按钮位置
+            self.ok_button_rect.y = self.input_rect.y + 50
+            self.cancel_button_rect.y = self.input_rect.y + 50
+        else:
+            # 如果没有消息，向上移动输入框
+            self.input_rect.y = self.rect.y + 50
+            self.ok_button_rect.y = self.input_rect.y + 50
+            self.cancel_button_rect.y = self.input_rect.y + 50
+
+    def draw(self, surface):
+        """绘制对话框"""
+        if not self.visible:
+            return
+
+        # 调用父类的绘制方法
+        super().draw(surface)
+
+        # 绘制消息文本（如果有）
+        for i, line in enumerate(self.message_lines):
+            msg_surf = self.message_font.render(line, True, self.colors['message_text'])
+            msg_pos = (self.rect.x + 20, self.rect.y + 35 + i * 25)
+            surface.blit(msg_surf, msg_pos)
+
+        # 绘制输入框
+        border_color = self.colors['input_border_focus'] if self.input_focus else self.colors['input_border']
+        pygame.draw.rect(surface, self.colors['input_bg'], self.input_rect)
+        pygame.draw.rect(surface, border_color, self.input_rect, 2)
+
+        # 创建用于文本渲染的表面
+        text_surface = pygame.Surface((self.input_rect.width - 4, self.input_rect.height - 4), pygame.SRCALPHA)
+
+        # 渲染文本
+        font = self.message_font
+        text_color = self.colors['message_text']
+
+        # 计算可见文本部分
+        visible_text = self.input_text
+
+        temp_text = self.input_text
+
+        # 渲染文本
+        text_img = font.render(temp_text, True, text_color)
+
+        # 计算文本位置（考虑滚动）
+        text_x = 4 - self.text_offset
+        text_y = (self.input_rect.height - text_img.get_height()) // 2
+
+        # 绘制文本到文本表面
+        text_surface.blit(text_img, (text_x, text_y))
+
+        # 绘制光标
+        if self.input_focus and self.cursor_visible:
+            # 计算光标位置
+
+            text_before_cursor = self.input_text[:self.cursor_position]
+
+            cursor_x = font.size(text_before_cursor)[0] - self.text_offset
+
+            # 确保光标在可见区域内
+            if cursor_x < 0:
+                self.text_offset += cursor_x
+                cursor_x = 0
+            elif cursor_x > self.input_rect.width - 10:
+                self.text_offset += cursor_x - (self.input_rect.width - 10)
+                cursor_x = self.input_rect.width + 10
+
+            cursor_rect = pygame.Rect(cursor_x, 2, 2, self.input_rect.height - 8)
+            pygame.draw.rect(text_surface, self.colors['cursor'], cursor_rect)
+
+
+
+        # 将文本表面绘制到主表面
+        surface.blit(text_surface, (self.input_rect.x + 2, self.input_rect.y + 2))
+
+    def handle_event(self, event):
+        """处理事件"""
+        if not self.visible:
+            return None
+
+        # 更新按钮悬停状态
+        mouse_pos = pygame.mouse.get_pos()
+        self.ok_hovered = self.ok_button_rect.collidepoint(mouse_pos)
+        self.cancel_hovered = self.cancel_button_rect.collidepoint(mouse_pos)
+
+        # 处理鼠标点击
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.input_rect.collidepoint(event.pos):
+                self.input_focus = True
+                # 计算点击位置对应的光标位置
+                self.update_cursor_position_from_mouse(event.pos)
+                return "INPUT"
+            elif self.ok_button_rect.collidepoint(event.pos):
+                self.result = self.input_text
+                self.hide()
+                return "OK"
+            elif self.cancel_button_rect.collidepoint(event.pos):
+                self.result = None
+                self.hide()
+                return "CANCEL"
+            else:
+                self.input_focus = False
+
+        # 处理键盘输入（仅在输入框获得焦点时）
+        if self.input_focus:
+            if event.type == pygame.KEYDOWN:
+                # 处理特殊键
+                if event.key == pygame.K_RETURN:
+                    self.result = self.input_text
+                    self.hide()
+                    return "OK"
+                elif event.key == pygame.K_ESCAPE:
+                    self.result = None
+                    self.hide()
+                    return "CANCEL"
+                elif event.key == pygame.K_BACKSPACE:
+                    self.back_text()
+                elif event.key == pygame.K_DELETE:
+                    if self.cursor_position < len(self.input_text):
+                        self.input_text = (self.input_text[:self.cursor_position] +
+                                           self.input_text[self.cursor_position + 1:])
+                else:
+                    # 不处理其他按键，等待TEXTINPUT事件
+                    pass
+
+            # 处理文本输入事件
+            elif event.type == pygame.TEXTINPUT:
+                # 插入普通文本
+                self.insert_text(event.text)
+
+            # 处理按钮点击
+            result = super().handle_event(event)
+            if result == "OK":
+                self.result = self.input_text
+                # 如果没有选择选项，不关闭对话框
+            return result
+
+
+
+    def insert_text(self, text):
+        """插入文本到当前光标位置"""
+        self.input_text = (self.input_text[:self.cursor_position] +
+                               text +
+                               self.input_text[self.cursor_position:])
+        self.cursor_position += len(text)
+
+    def clear_text(self):
+        self.input_text = ""
+        self.cursor_position = 0
+
+    def back_text(self):
+        if self.cursor_position > 0:
+            # 删除光标前的字符
+            self.input_text = (self.input_text[:self.cursor_position - 1] +
+                               self.input_text[self.cursor_position:])
+            self.cursor_position -= 1
+
+    def update_cursor_position_from_mouse(self, mouse_pos):
+        """根据鼠标点击位置更新光标位置"""
+        # 计算相对于输入框的位置
+        rel_x = mouse_pos[0] - self.input_rect.x - 2 + self.text_offset
+
+        # 找到最接近的字符位置
+        font = self.message_font
+        current_width = 0
+        best_position = 0
+        min_distance = float('inf')
+
+        for i in range(len(self.input_text) + 1):
+            # 计算到当前位置的距离
+            distance = abs(rel_x - current_width)
+            if distance < min_distance:
+                min_distance = distance
+                best_position = i
+
+            if i < len(self.input_text):
+                # 计算下一个字符的宽度
+                char_width = font.size(self.input_text[i])[0]
+                current_width += char_width
+
+        self.cursor_position = best_position
+
+    def update(self):
+        """更新对话框状态"""
+        # 更新光标闪烁
+        current_time = pygame.time.get_ticks()
+        if current_time - self.cursor_timer > self.cursor_blink_interval:
+            self.cursor_visible = not self.cursor_visible
+            self.cursor_timer = current_time
+
+        # 确保文本滚动正确
+        self.ensure_cursor_visible()
+
+    def ensure_cursor_visible(self):
+        """确保光标在可见区域内"""
+        if not self.input_focus:
+            return
+
+        font = self.message_font
+        text_before_cursor = self.input_text[:self.cursor_position]
+        cursor_x = font.size(text_before_cursor)[0]
+
+        # 检查光标是否在可见区域外
+        if cursor_x < self.text_offset:
+            self.text_offset = cursor_x
+        elif cursor_x > self.text_offset + self.input_rect.width - 10:
+            self.text_offset = cursor_x - self.input_rect.width + 10
+
+    def show(self):
+        """显示对话框"""
+        super().show()
+        self.input_focus = True
+        self.cursor_visible = True
+        self.cursor_timer = pygame.time.get_ticks()
+
+
+# ------------------- 测试代码（可直接运行） -------------------
+if __name__ == "__main__":
+    # 创建窗口
+    screen = pygame.display.set_mode((600, 400))
+    pygame.display.set_caption("中文输入对话框测试")

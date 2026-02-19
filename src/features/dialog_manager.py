@@ -8,7 +8,7 @@ class DialogState(Enum):
     INACTIVE = 0
     SAVE_CONFIRM = 1
     STYLE_SELECT = 2
-    ART_RESULT = 3
+    STYLE_DIY = 3
 
 
 class DialogManager:
@@ -128,8 +128,14 @@ class DialogManager:
         """处理对话框事件"""
         if not self.current_dialog or not self.current_dialog.visible:
             return False
+        result = None
+        if isinstance(event,pygame.event.EventType):
+            result = self.current_dialog.handle_event(event)
+        # 处理voice调用,此时event的是字典，存储信息
+        elif isinstance(event, dict):
+            result = event["result"]
 
-        result = self.current_dialog.handle_event(event)
+
         if result:
             if self.state == DialogState.SAVE_CONFIRM:
                 if result == "OK":
@@ -142,7 +148,8 @@ class DialogManager:
                         "minimalist line art",
                         "surreal dreamlike painting",
                         "vibrant pop art style",
-                        "elegant ink drawing"
+                        "elegant ink drawing",
+                        'DIY'
                     ]
                     self.show_style_select(styles, self.callback)
                 else:
@@ -160,15 +167,50 @@ class DialogManager:
                     elif hasattr(self.current_dialog, 'result'):
                         selected_style = self.current_dialog.result
                     self.close_dialog()
-                    if self.callback:
+                    # 如果选择是自定义
+                    if selected_style == "DIY":
+                        self.show_input_dialog()
+                    elif self.callback:
                         self.callback(True, selected_style)
                 elif result == "CANCEL":
                     # 用户取消风格选择
                     self.close_dialog()
                     if self.callback:
                         self.callback(False, None)
-
+            #添加自定义输入
+            elif self.state == DialogState.STYLE_DIY:
+                if hasattr(self.current_dialog, 'input_text'):
+                    style = self.current_dialog.input_text
+                if result == "OK":
+                    self.close_dialog()
+                    if self.callback:
+                        self.callback(True, style)
+                elif result == "CANCEL":
+                    self.close_dialog()
+                    if self.callback:
+                        self.callback(False, None)
+                elif result == "INPUT":
+                    if isinstance(event,dict):
+                        self.current_dialog.insert_text(event["content"])
         return True
+
+    def show_input_dialog(self):
+        self.state = DialogState.STYLE_DIY
+        # 创建选项对话框
+        dialog_rect = pygame.Rect(0, 0, 550, 400)
+        dialog_rect.center = (self.screen_width // 2, self.screen_height // 2)
+    #
+        from src.features.custom_dialog import InputDialog
+        self.current_dialog = InputDialog(
+            dialog_rect,
+            "创作风格自定义",
+            "请说出一个你喜欢的艺术风格:",
+            "默认",
+            self.font_path,
+            12
+        )
+        self.current_dialog.show()
+
 
     def close_dialog(self):
         """关闭对话框"""

@@ -1,3 +1,8 @@
+import os
+# 必须在导入任何其他库之前设置，否则可能无效
+os.environ["GLOG_minloglevel"] = "2"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
 from pathlib import Path
 
 import pygame
@@ -129,7 +134,8 @@ class AirPaintingApp:
             # 初始化可视化器
             self.visualizer = Visualizer(self.screen, self.font, self.small_font)
 
-            self.face_swapper = FaceSwapper(self.gesture_commands.current_face_source)
+            with SuppressStderr():
+                self.face_swapper = FaceSwapper(self.gesture_commands.current_face_source)
 
             # 初始化摄像头
             self.cap = cv2.VideoCapture(0)
@@ -308,13 +314,22 @@ class AirPaintingApp:
                 style=style,
                 progress_callback=progress_callback
             )
-            converter.save_and_display_results(processed_doodle, creations)
+            # 获取保存的路径，不显示plt窗口
+            saved_paths = converter.save_and_display_results(processed_doodle, creations, show_plot=False)
             print(f"艺术化转换完成，风格: {style}")
             
             task["status"] = "完成"
             task["progress"] = 100
             task["finished"] = True
             task["remove_time"] = time.time() + 5 # 5秒后消失
+            
+            # 将结果路径存入任务对象，供主线程显示
+            if saved_paths and saved_paths.get('creations'):
+                task["result_paths"] = {
+                    "original": saved_paths['original'],
+                    "generated": saved_paths['creations'][0]
+                }
+                task["needs_display"] = True
             
         except Exception as e:
             print(f"艺术化转换失败: {e}")
@@ -550,11 +565,34 @@ class AirPaintingApp:
 
 
         # 绘制状态信息
-        status_text = f"状态: {'绘画中' if self.drawing_active else '待机'} | 手势: {self.current_gesture or '无'}"
+        gesture_map = {
+            "Pointing_Up": "上指(绘画)",
+            "Open_Palm": "张开手掌(清空)",
+            "Closed_Fist": "握拳(撤销)",
+            "Victory": "胜利手势(保存)",
+            "Thumb_Up": "大拇指上(变大)",
+            "Thumb_Down": "大拇指下(变小)",
+            "ILoveYou": "比心(切换头像)",
+            "None": "无"
+        }
+        display_gesture = gesture_map.get(self.current_gesture, self.current_gesture or "无")
+        
+        status_text = f"状态: {'绘画中' if self.drawing_active else '待机'} | 手势: {display_gesture}"
         status_surface = self.small_font.render(status_text, True, self.colors['text'])
         self.screen.blit(status_surface, (20, self.camera_height + 40))
 
         # 绘制艺术生成任务列表
+        # 检查是否有任务需要显示结果
+        for task in self.processing_tasks:
+            if task.get("finished") and task.get("needs_display"):
+                # 触发结果展示对话框
+                self.dialog_manager.show_art_result(
+                    task["result_paths"]["original"],
+                    task["result_paths"]["generated"],
+                    task["style"]
+                )
+                task["needs_display"] = False # 标记为已显示
+        
         # 清理已完成并超时的任务
         current_time = time.time()
         self.processing_tasks = [t for t in self.processing_tasks if not (t["finished"] and current_time > t["remove_time"])]
@@ -668,6 +706,16 @@ class AirPaintingApp:
         except Exception as e:
             print(f"艺术化转换失败: {e}")
 
+    def debug_test_dialog(self):
+        """测试用：直接显示结果对话框"""
+        # 使用现有的图片作为测试
+        test_img = "assets/avatar_sticker/img1.png"
+        if os.path.exists(test_img):
+            self.dialog_manager.show_art_result(
+                test_img, 
+                test_img, 
+                "Debug Test Prompt: vibrant pop art style"
+            )
 
     def run(self):
         """主循环"""
@@ -689,6 +737,9 @@ class AirPaintingApp:
 
 
                 pygame.display.flip()
+                
+                # DEBUG: 启动时直接显示对话框
+                self.debug_test_dialog()
             else:
 
                 # 处理摄像头帧和手势识别

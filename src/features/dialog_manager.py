@@ -8,6 +8,7 @@ class DialogState(Enum):
     INACTIVE = 0
     SAVE_CONFIRM = 1
     STYLE_SELECT = 2
+    ART_RESULT = 3
 
 
 class DialogManager:
@@ -44,6 +45,26 @@ class DialogManager:
             'button_text': (0, 0, 0),
             'overlay': (0, 0, 0, 128)  # 半透明黑色
         }
+
+    def show_art_result(self, original_path, generated_path, prompt):
+        """显示艺术创作结果对话框"""
+        self.state = DialogState.ART_RESULT
+        
+        # 创建结果展示对话框
+        dialog_rect = pygame.Rect(0, 0, 900, 600)
+        dialog_rect.center = (self.screen_width // 2, self.screen_height // 2)
+        
+        from src.features.art_result_dialog import ArtResultDialog
+        self.current_dialog = ArtResultDialog(
+            dialog_rect,
+            original_path,
+            generated_path,
+            prompt,
+            self.font_path
+        )
+        self.current_dialog.show()
+        # 结果展示不需要回调，关闭即可
+        self.callback = None
 
     def show_save_confirm(self, filename, callback):
         """显示保存确认对话框"""

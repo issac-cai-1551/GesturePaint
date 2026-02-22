@@ -199,7 +199,7 @@ class DialogManager:
         # 创建选项对话框
         dialog_rect = pygame.Rect(0, 0, 550, 400)
         dialog_rect.center = (self.screen_width // 2, self.screen_height // 2)
-    #
+        
         from src.features.custom_dialog import InputDialog
         self.current_dialog = InputDialog(
             dialog_rect,

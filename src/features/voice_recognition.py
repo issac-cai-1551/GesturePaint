@@ -79,9 +79,11 @@ class BaiduRealtimeASR:
                     if self.audio_callback and audio_data:
                         self.audio_callback(audio_data)
 
-                    # 重要：根据CHUNK大小计算需要sleep的时间
-                    # 80ms的数据块需要间隔80ms发送
-                    time.sleep(0.16)  # 80ms
+                    # 移除显式的 sleep，因为 stream.read 是阻塞的，
+                    # 它已经按照采样率控制了时间间隔。
+                    # 额外的 sleep 会导致发送速度低于实时速度，引发 [-3101] 超时。
+                    # time.sleep(0.16) 
+
 
 
                 except IOError as e:
@@ -161,7 +163,7 @@ class BaiduRealtimeASR:
 class RealtimeVoiceController:
     def __init__(self, on_result_callback=None):
         """
-        :param on_result_callback: 识别结果回调函数
+        :param on_result_callback: 识别结果回调函数，签名：(text, start_time, end_time, is_final)
         """
         self.on_result_callback = on_result_callback
         self.ws_app = None
@@ -282,9 +284,10 @@ class RealtimeVoiceController:
             result = json.loads(message)
 
             # 检查错误码
-            if result.get("err_no") != 0:
+            err_no = result.get("err_no")
+            if err_no is not None and err_no != 0:
                 err_msg = result.get("err_msg", "未知错误")
-                print(f"❌ 识别错误 [{result.get('err_no')}]: {err_msg}")
+                print(f"❌ 识别错误 [{err_no}]: {err_msg}")
                 return
 
             # 获取结果类型
@@ -294,6 +297,10 @@ class RealtimeVoiceController:
                 # 临时识别结果
                 text = result.get("result", "")
                 print(f"🟡 正在识别: {text}", end='\r')
+                
+                # 回调中间结果
+                if self.on_result_callback:
+                     self.on_result_callback(text, 0, 0, is_final=False)
 
             elif result_type == "FIN_TEXT":
                 # 最终识别结果
@@ -306,7 +313,7 @@ class RealtimeVoiceController:
 
                 # 调用回调函数处理结果
                 if self.on_result_callback:
-                    self.on_result_callback(text, start_time, end_time)
+                    self.on_result_callback(text, start_time, end_time, is_final=True)
 
             elif result_type == "HEARTBEAT":
                 # 心跳帧，忽略

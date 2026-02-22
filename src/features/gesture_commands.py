@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 class CommandResult:
     def __init__(self, success, message, data=None):
@@ -24,15 +25,18 @@ class GestureCommands:
         self.last_command_time = {}  # 防抖处理
         self.command_cooldown = 1.0  # 命令冷却时间
 
+        # 获取项目根目录
+        project_root = Path(__file__).parent.parent.parent
+        assets_dir = project_root / "assets" / "avatar_sticker"
 
         self.face_sources = [
-            "E:/GesturePaint/assets/avatar_sticker/img1.png",
-            "E:/GesturePaint/assets/avatar_sticker/img2.png",
-            "E:/GesturePaint/assets/avatar_sticker/img3.png",
-            "E:/GesturePaint/assets/avatar_sticker/img4.jpeg",
-            "E:/GesturePaint/assets/avatar_sticker/img5.webp",
-            "E:/GesturePaint/assets/avatar_sticker/img6.webp",
-            "E:/GesturePaint/assets/avatar_sticker/img7.webp",
+            str(assets_dir / "img1.png"),
+            str(assets_dir / "img2.png"),
+            str(assets_dir / "img3.png"),
+            str(assets_dir / "img4.jpeg"),
+            str(assets_dir / "img5.webp"),
+            str(assets_dir / "img6.webp"),
+            str(assets_dir / "img7.webp"),
             None
         ]
 
@@ -122,4 +126,5 @@ class GestureCommands:
         if self.current_face_source_index >= self.face_source_size:
             self.current_face_source_index = 0
         self.current_face_source = self.face_sources[self.current_face_source_index]
+        return CommandResult(True, "已切换源头像")
 

@@ -4,6 +4,7 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import time
+from src.utils.SuppressStderr import SuppressStderr
 
 
 class GestureDetector:
@@ -20,7 +21,8 @@ class GestureDetector:
             min_hand_presence_confidence=0.5,
             min_tracking_confidence=0.5
         )
-        self.recognizer = vision.GestureRecognizer.create_from_options(options)
+        with SuppressStderr():
+            self.recognizer = vision.GestureRecognizer.create_from_options(options)
         self.latest_result = None
         self.timestamp = 0
 

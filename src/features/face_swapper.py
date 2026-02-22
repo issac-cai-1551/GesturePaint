@@ -5,6 +5,8 @@ import mediapipe as mp
 
 import time
 import os
+from pathlib import Path
+from src.utils.SuppressStderr import SuppressStderr
 
 
 class FaceSwapper:
@@ -23,13 +25,14 @@ class FaceSwapper:
         self.load_source_face(self.source_face_path)
 
         # 初始化人脸网格（468个关键点）
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            static_image_mode=False,
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
+        with SuppressStderr():
+            self.face_mesh = self.mp_face_mesh.FaceMesh(
+                static_image_mode=False,
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
 
         # 用于存储最近的人脸关键点
         self.last_face_landmarks = None
@@ -46,14 +49,19 @@ class FaceSwapper:
             self.source_face = source_img
 
             # 使用高精度模式提取源人脸关键点
-            with self.mp_face_mesh.FaceMesh(
-                    static_image_mode=True,
-                    max_num_faces=1,
-                    refine_landmarks=True,
-                    min_detection_confidence=0.5
-            ) as face_mesh:
+            # 使用SuppressStderr屏蔽初始化时的底层日志
+            with SuppressStderr():
+                face_mesh = self.mp_face_mesh.FaceMesh(
+                        static_image_mode=True,
+                        max_num_faces=1,
+                        refine_landmarks=True,
+                        min_detection_confidence=0.5
+                )
+            
+            with face_mesh:
                 rgb_img = cv2.cvtColor(self.source_face, cv2.COLOR_BGR2RGB)
-                results = face_mesh.process(rgb_img)
+                with SuppressStderr():
+                    results = face_mesh.process(rgb_img)
 
                 if results.multi_face_landmarks:
                     self.source_face_points = self.extract_all_face_points(
@@ -289,13 +297,18 @@ def main():
     # 测试换脸功能
 
     # 构建源人脸路径
-    # current_dir = os.path.dirname(os.path.abspath(__file__))
-
-
-
-    # source_face_path = "E:/GesturePaint/assets/avatar_sticker/avataaars.png"
-    source_face_path ="E:/GesturePaint/assets/avatar_sticker/adventurer-1765898372321.png"
-
+    current_dir = Path(__file__).parent.parent.parent
+    assets_dir = current_dir / "assets" / "avatar_sticker"
+    
+    # 尝试查找可用的图片
+    source_face_path = None
+    possible_files = ["adventurer-1765898372321.png", "avataaars.png", "img1.png"]
+    
+    for filename in possible_files:
+        path = assets_dir / filename
+        if path.exists():
+            source_face_path = str(path)
+            break
 
     if source_face_path is None:
         print("未找到源人脸图像，使用默认图像")
@@ -324,7 +337,9 @@ def main():
             break
 
         # 执行换脸
-        swapped_frame = face_swapper.detect_and_swap(frame,"E:/GesturePaint/assets/avatar_sticker/img1.png")
+        # 使用找到的同一张图片作为目标，或者使用另一张
+        target_path = str(assets_dir / "img1.png") if (assets_dir / "img1.png").exists() else source_face_path
+        swapped_frame = face_swapper.detect_and_swap(frame, target_path)
 
         # 显示结果
         cv2.imshow('Face Swap', swapped_frame)

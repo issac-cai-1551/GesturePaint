@@ -408,9 +408,14 @@ import torch
 import cv2
 import numpy as np
 import warnings
+import logging
 
 # 忽略diffusers的FutureWarning，因为新版API(callback_on_step_end)和环境还不兼容我没法改
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+# 屏蔽transformers和diffusers的日志
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("diffusers").setLevel(logging.ERROR)
 
 from datetime import datetime
 from PIL import Image, ImageDraw
@@ -419,6 +424,13 @@ import matplotlib.pyplot as plt
 from diffusers import StableDiffusionImg2ImgPipeline  # 移除ControlNet相关导入
 from pathlib import Path
 from transformers import BlipProcessor, BlipForConditionalGeneration
+from transformers import logging as transformers_logging
+
+# 禁用diffusers的进度条和日志
+diffusers_logging.disable_progress_bar()
+diffusers_logging.set_verbosity_error()
+# 禁用transformers的日志
+transformers_logging.set_verbosity_error()
 
 
 class DoodleToArtConverter:
@@ -666,7 +678,7 @@ class DoodleToArtConverter:
     # def add_style(self, prompt, style):
     #     return f"{prompt}, {style}"
 
-    def save_and_display_results(self, original_doodle, creations):
+    def save_and_display_results(self, original_doodle, creations, show_plot=True):
         """保存和显示结果"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -682,7 +694,7 @@ class DoodleToArtConverter:
         axes[0].set_title("Original Doodle")
         axes[0].axis('off')
 
-        # 显示生成的作品
+        # 保存单个作品
         for i, (img, prompt) in enumerate(creations):
             axes[i + 1].imshow(img)
             axes[i + 1].set_title(f"Creation {i + 1}")
@@ -691,10 +703,12 @@ class DoodleToArtConverter:
             # 保存单个作品
             creation_path = session_dir / f"{timestamp}_creation_{i + 1}.png"
             img.save(creation_path)
+            saved_paths['creations'].append(str(creation_path))
 
         # 保存原始涂鸦
         original_path = session_dir / f"{timestamp}_original.png"
         original_doodle.save(original_path)
+        saved_paths['original'] = str(original_path)
 
         # 保存提示词信息
         prompts_path = session_dir / f"{timestamp}_prompts.txt"
@@ -702,11 +716,33 @@ class DoodleToArtConverter:
             for i, (_, prompt) in enumerate(creations):
                 f.write(f"Creation {i + 1}: {prompt}\n")
 
-        plt.tight_layout()
-        plt.show()
-
         print(f"所有作品已保存到: {self.output_dir}")
         print(f"时间戳: {timestamp}")
+        
+        if show_plot:
+            # 创建展示图
+            try:
+                fig, axes = plt.subplots(2, (len(creations) + 1) // 2, figsize=(15, 10))
+                axes = axes.flatten()
+
+                # 显示原始涂鸦
+                axes[0].imshow(original_doodle, cmap='gray')
+                axes[0].set_title("Original Doodle")
+                axes[0].axis('off')
+
+                # 显示生成的作品
+                for i, (img, prompt) in enumerate(creations):
+                    if i + 1 < len(axes):
+                        axes[i + 1].imshow(img)
+                        axes[i + 1].set_title(f"Creation {i + 1}")
+                        axes[i + 1].axis('off')
+
+                plt.tight_layout()
+                plt.show()
+            except Exception as e:
+                print(f"无法显示结果图表: {e}")
+        
+        return saved_paths
 
 
 def main():

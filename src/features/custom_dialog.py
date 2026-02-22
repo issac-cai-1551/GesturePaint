@@ -392,7 +392,7 @@ class InputDialog(CustomDialog):
             # 调整输入框位置
             message_height = len(self.message_lines) * 25
             self.input_rect.y = self.rect.y + 50 + message_height
-            # 调整按钮位置
+            # 调整按钮位置 (恢复原来的间距)
             self.ok_button_rect.y = self.input_rect.y + 50
             self.cancel_button_rect.y = self.input_rect.y + 50
         else:
@@ -400,6 +400,16 @@ class InputDialog(CustomDialog):
             self.input_rect.y = self.rect.y + 50
             self.ok_button_rect.y = self.input_rect.y + 50
             self.cancel_button_rect.y = self.input_rect.y + 50
+            
+        # 底部说明文字
+        self.bottom_tips = [
+            "语音指令:", 
+            "说 '清空' -> 清空  |  说 '删除' -> 回退",
+            "说 '确认' -> 提交  |  说 '取消' -> 关闭"
+        ]
+        
+        # 增加对话框高度以容纳底部文字
+        self.rect.height += 60
 
     def draw(self, surface):
         """绘制对话框"""
@@ -419,6 +429,18 @@ class InputDialog(CustomDialog):
         border_color = self.colors['input_border_focus'] if self.input_focus else self.colors['input_border']
         pygame.draw.rect(surface, self.colors['input_bg'], self.input_rect)
         pygame.draw.rect(surface, border_color, self.input_rect, 2)
+        
+        # 绘制底部说明文字 (在按钮下方)
+        if hasattr(self, 'bottom_tips'):
+            # 寻找合适的字体大小
+            tip_font = self.message_font
+            tip_start_y = self.ok_button_rect.bottom + 15
+            
+            for i, tip in enumerate(self.bottom_tips):
+                tip_surf = tip_font.render(tip, True, (120, 120, 120))
+                # 居中显示
+                tip_x = self.rect.centerx - tip_surf.get_width() // 2
+                surface.blit(tip_surf, (tip_x, tip_start_y + i * 20))
 
         # 创建用于文本渲染的表面
         text_surface = pygame.Surface((self.input_rect.width - 4, self.input_rect.height - 4), pygame.SRCALPHA)

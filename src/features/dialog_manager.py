@@ -7,8 +7,9 @@ from pathlib import Path
 class DialogState(Enum):
     INACTIVE = 0
     SAVE_CONFIRM = 1
-    STYLE_SELECT = 2
-    STYLE_DIY = 3
+    PROMPT_INPUT = 2
+    STYLE_SELECT = 3
+    STYLE_INPUT = 4
 
 
 class DialogManager:
@@ -140,6 +141,32 @@ class DialogManager:
             if self.state == DialogState.SAVE_CONFIRM:
                 if result == "OK":
                     # 用户确认进行艺术化创作
+                    # styles = [
+                    #     "masterpiece oil painting",
+                    #     "beautiful watercolor art",
+                    #     "professional digital artwork",
+                    #     "fantasy concept art",
+                    #     "minimalist line art",
+                    #     "surreal dreamlike painting",
+                    #     "elegant ink drawing",
+                    #     "school style",
+                    #     '自定义'
+                    # ]
+                    # self.show_style_select(styles, self.callback)
+                    self.show_prompt_input_dialog()
+                else:
+                    # 用户取消，关闭对话框
+                    self.close_dialog()
+                    if self.callback:
+                        self.callback(False, None)
+
+            elif self.state == DialogState.PROMPT_INPUT:
+                if hasattr(self.current_dialog, "input_text"):
+                    prompt = self.current_dialog.input_text
+                if result == "OK":
+                    self.close_dialog()
+                    if self.callback:
+                        self.callback(False, prompt)
                     styles = [
                         "masterpiece oil painting",
                         "beautiful watercolor art",
@@ -147,16 +174,18 @@ class DialogManager:
                         "fantasy concept art",
                         "minimalist line art",
                         "surreal dreamlike painting",
-                        "vibrant pop art style",
                         "elegant ink drawing",
-                        'DIY'
+                        "school style",
+                        '自定义'
                     ]
                     self.show_style_select(styles, self.callback)
-                else:
-                    # 用户取消，关闭对话框
+                elif result == "Cancel":
                     self.close_dialog()
                     if self.callback:
                         self.callback(False, None)
+                elif result == "INPUT":
+                    if isinstance(event,dict):
+                        self.current_dialog.insert_text(event["content"])
 
             elif self.state == DialogState.STYLE_SELECT:
                 if result == "OK":
@@ -168,17 +197,21 @@ class DialogManager:
                         selected_style = self.current_dialog.result
                     self.close_dialog()
                     # 如果选择是自定义
-                    if selected_style == "DIY":
-                        self.show_input_dialog()
-                    elif self.callback:
-                        self.callback(True, selected_style)
+                    if selected_style == "自定义":
+                        self.show_style_input_dialog()
+                    else:
+                        if self.callback:
+                            if selected_style == "无":
+                                self.callback(True, None)
+                            else:
+                                self.callback(True, selected_style)
                 elif result == "CANCEL":
                     # 用户取消风格选择
                     self.close_dialog()
                     if self.callback:
                         self.callback(False, None)
             #添加自定义输入
-            elif self.state == DialogState.STYLE_DIY:
+            elif self.state == DialogState.STYLE_INPUT:
                 if hasattr(self.current_dialog, 'input_text'):
                     style = self.current_dialog.input_text
                 if result == "OK":
@@ -194,8 +227,8 @@ class DialogManager:
                         self.current_dialog.insert_text(event["content"])
         return True
 
-    def show_input_dialog(self):
-        self.state = DialogState.STYLE_DIY
+    def show_style_input_dialog(self):
+        self.state = DialogState.STYLE_INPUT
         # 创建选项对话框
         dialog_rect = pygame.Rect(0, 0, 550, 400)
         dialog_rect.center = (self.screen_width // 2, self.screen_height // 2)
@@ -205,7 +238,24 @@ class DialogManager:
             dialog_rect,
             "创作风格自定义",
             "请说出一个你喜欢的艺术风格:",
-            "默认",
+            "",
+            self.font_path,
+            12
+        )
+        self.current_dialog.show()
+
+    def show_prompt_input_dialog(self):
+        self.state = DialogState.PROMPT_INPUT
+        # 创建选项对话框
+        dialog_rect = pygame.Rect(0, 0, 700, 300)
+        dialog_rect.center = (self.screen_width // 2, self.screen_height // 2)
+        #
+        from src.features.custom_dialog import InputDialog
+        self.current_dialog = InputDialog(
+            dialog_rect,
+            "prompt输入",
+            "请输入艺术图片生成的提示词:",
+            "High quality, detailed, sharp focus, beautiful composition, cinematic lighting, masterpiece, ultra-detailed, clean and clear",
             self.font_path,
             12
         )

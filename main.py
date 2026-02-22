@@ -140,8 +140,6 @@ class AirPaintingApp:
             with SuppressStderr():
                 self.gesture_detector = GestureDetector(model_path)
 
-            # self.face_detector = FaceDetector()
-
 
             # 初始化画布管理器
             self.canvas_manager = CanvasManager(self.canvas_width, self.canvas_height)
@@ -269,12 +267,12 @@ class AirPaintingApp:
             print(f"保存失败: {e}")
             self.is_paused = False
 
-    def on_dialog_finished(self, convert_art, style=None):
+    def on_dialog_finished(self, convert_art, style=None, prompt=None):
         """对话框完成回调"""
         # 恢复手势识别
         self.is_paused = False
 
-        if convert_art and style:
+        if convert_art:
             # 创建新任务
             filename = f"assets/saved_drawings/{self.dialog_manager.saved_filename}.png"
             
@@ -283,6 +281,7 @@ class AirPaintingApp:
                 "filename": self.dialog_manager.saved_filename,
                 "full_path": filename,
                 "style": style,
+                "prompt": prompt,
                 "progress": 0,
                 "status": "等待处理...",
                 "thumbnail": None,
@@ -334,6 +333,7 @@ class AirPaintingApp:
         """执行单个艺术生成任务"""
         filename = task["full_path"]
         style = task["style"]
+        prompt = task["prompt"]
         
         try:
             # 定义进度回调
@@ -346,6 +346,7 @@ class AirPaintingApp:
                 doodle_img, 
                 num_creations=1, 
                 style=style,
+                prompt=prompt,
                 progress_callback=progress_callback
             )
             # 获取保存的路径，不显示plt窗口
@@ -770,17 +771,6 @@ class AirPaintingApp:
             self.dialog_manager.draw(self.screen)
             pygame.display.flip()  # 确保对话框立即显示
 
-    def handle_doodle_create(self, filename, style):
-        """处理涂鸦艺术化转换"""
-        try:
-            converter = DoodleToArtConverter()
-            doodle_img = Image.open(filename)
-            creations, processed_doodle = converter.auto_generate_from_doodle(doodle_img, num_creations=1, style=style)
-            converter.save_and_display_results(processed_doodle, creations)
-            print(f"艺术化转换完成，风格: {style}")
-        except Exception as e:
-            print(f"艺术化转换失败: {e}")
-
     # 在main.py中完善语音命令处理函数
     def handle_voice_command(self, text, start_time, end_time, is_final=True):
         """统一处理语音命令"""
@@ -865,6 +855,26 @@ class AirPaintingApp:
                 self.dialog_manager.handle_event(event)
                 command_found = True
 
+        elif state == DialogState.PROMPT_INPUT:
+            event = {}
+            event["result"] = 'None'
+            event["content"] = text
+            if any(cmd in text for cmd in ["保存", "存下来", "确定", "确认"]):
+                event["result"] = "OK"
+                print("确定保存")
+            elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+                event["result"] = 'CANCEL'
+                print("保存已取消")
+            elif any(cmd in text for cmd in ["清空", "全部删除"]):
+                if hasattr(self.dialog_manager.current_dialog, "input_text"):
+                    self.dialog_manager.current_dialog.clear_text()
+            elif any(cmd in text for cmd in ["删除", "回退"]):
+                if hasattr(self.dialog_manager.current_dialog, "input_text"):
+                    self.dialog_manager.current_dialog.back_text()
+            else:
+                event["result"] = 'INPUT'
+            self.dialog_manager.handle_event(event)
+
         elif state == DialogState.STYLE_SELECT:
             event = {}
             if any(cmd in text for cmd in ["diy", "自定义"]):
@@ -886,11 +896,11 @@ class AirPaintingApp:
                 self.dialog_manager.handle_event(event)
                 command_found = True
 
-        elif state == DialogState.STYLE_DIY:
+        elif state == DialogState.STYLE_INPUT:
             event = {}
             event["result"] = 'None'
             event["content"] = text
-            if any(cmd in text for cmd in ["保存", "存下来", "保存画布","确定","确认"]):
+            if any(cmd in text for cmd in ["保存", "存下来", "确定", "确认"]):
                 event["result"] = "OK"
                 print("确定保存")
                 command_found = True

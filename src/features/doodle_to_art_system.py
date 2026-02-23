@@ -404,6 +404,11 @@ os.environ['NO_PROXY'] = '*'
 os.environ['HTTP_PROXY'] = ''
 os.environ['HTTPS_PROXY'] = ''
 
+#  禁用xformers的Triton检测（核心解决Triton提示）
+os.environ['XFORMERS_DISABLE_TRITON'] = '1'
+os.environ['XFORMERS_FORCE_DISABLE_TRITON'] = '1'
+
+
 import torch
 import cv2
 import numpy as np

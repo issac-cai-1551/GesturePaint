@@ -390,7 +390,6 @@ os.environ['HF_HOME'] = ''
 os.environ['HUGGINGFACE_HUB_CACHE'] = ''
 os.environ['TRANSFORMERS_CACHE'] = ''
 
-import os
 
 # 设置HuggingFace缓存目录
 cache_dir = "E:/huggingface_cache"
@@ -429,6 +428,7 @@ import matplotlib.pyplot as plt
 from diffusers import StableDiffusionImg2ImgPipeline  # 移除ControlNet相关导入
 from pathlib import Path
 from transformers import BlipProcessor, BlipForConditionalGeneration
+from diffusers.utils import logging as diffusers_logging
 from transformers import logging as transformers_logging
 
 # 禁用diffusers的进度条和日志
@@ -690,22 +690,10 @@ class DoodleToArtConverter:
         session_dir = self.output_dir / f"art_{timestamp}"
         session_dir.mkdir(exist_ok=True)
 
-        # 创建展示图
-        fig, axes = plt.subplots(2, (len(creations) + 1) // 2, figsize=(15, 10))
-        axes = axes.flatten()
-
-        # 显示原始涂鸦
-        axes[0].imshow(original_doodle)
-        axes[0].set_title("Original Doodle")
-        axes[0].axis('off')
+        saved_paths = {'creations': []}
 
         # 保存单个作品
         for i, (img, prompt) in enumerate(creations):
-            axes[i + 1].imshow(img)
-            axes[i + 1].set_title(f"Creation {i + 1}")
-            axes[i + 1].axis('off')
-
-            # 保存单个作品
             creation_path = session_dir / f"{timestamp}_creation_{i + 1}.png"
             img.save(creation_path)
             saved_paths['creations'].append(str(creation_path))
@@ -723,7 +711,7 @@ class DoodleToArtConverter:
 
         print(f"所有作品已保存到: {self.output_dir}")
         print(f"时间戳: {timestamp}")
-        
+
         if show_plot:
             # 创建展示图
             try:
@@ -746,9 +734,8 @@ class DoodleToArtConverter:
                 plt.show()
             except Exception as e:
                 print(f"无法显示结果图表: {e}")
-        
-        return saved_paths
 
+        return saved_paths
 
 def main():
     converter = DoodleToArtConverter()

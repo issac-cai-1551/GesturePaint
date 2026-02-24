@@ -597,6 +597,7 @@ class DoodleToArtConverter:
                 final_prompt=f"{prompt},{style}"
         # 如果你想要调整触发词的权重，可以这样写：
         # enhanced_prompt = f"({trigger_word}:1.2), {style_enhanced_prompt}"
+        print("final_prompt:"f"{final_prompt}")
 
         # 🔥 修改这里：不再需要线稿预处理
         # 2. 直接使用原始涂鸦作为输入图像

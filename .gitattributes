@@ -1,0 +1,6 @@
+# 追踪 lora 目录下的模型文件
+models/lora/**/*.safetensors filter=lfs diff=lfs merge=lfs -text
+models/lora/**/*.bin filter=lfs diff=lfs merge=lfs -text
+models/lora/**/*.pth filter=lfs diff=lfs merge=lfs -text
+models/lora/**/*.ckpt filter=lfs diff=lfs merge=lfs -text
+models/lora/**/*.pt filter=lfs diff=lfs merge=lfs -text

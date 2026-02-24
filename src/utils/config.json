@@ -1,0 +1,16 @@
+{
+  "provider": "deepseek",
+  "api_key": "sk-your-deepseek-api-key-here",
+  "base_url": "https://api.deepseek.com/v1",
+  "model": "deepseek-chat",
+  "local_model_path": "",
+  "use_local": false,
+  "instructions": "请从以下地址获取API Key:",
+  "deepseek_url": "https://platform.deepseek.com/api_keys",
+  "openai_url": "https://platform.openai.com/api-keys",
+  "local_models": {
+    "chatglm3": "THUDM/chatglm3-6b",
+    "qwen": "Qwen/Qwen2.5-7B-Instruct",
+    "llama": "meta-llama/Llama-2-7b-chat-hf"
+  }
+}

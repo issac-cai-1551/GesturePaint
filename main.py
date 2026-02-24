@@ -3,8 +3,8 @@ import os
 os.environ["GLOG_minloglevel"] = "2"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-from pathlib import Path
 
+from pathlib import Path
 import pygame
 import cv2
 import numpy as np
@@ -12,13 +12,11 @@ import sys
 import time
 import threading
 import queue
+from PIL import Image
 
 # from src.features.smart_voice_controller import SmartVoiceController
 # from src.features.voice_ui import VoiceUI
 from src.utils.SuppressStderr import SuppressStderr
-
-from PIL import Image
-
 from src.core.gesture_detector import GestureDetector
 from src.core.canvas_manager import CanvasManager
 from src.core.brush_engine import BrushEngine
@@ -31,8 +29,21 @@ from src.features.custom_dialog import CustomDialog,OptionDialog
 from src.features.doodle_to_art_system import DoodleToArtConverter
 from src.features.dialog_manager import DialogManager, DialogState
 from src.features.voice_recognition import RealtimeVoiceController
-import os
 
+
+import sys
+import traceback
+
+def global_excepthook(exc_type, exc_value, exc_traceback):
+    print("="*50)
+    print("UNCAUGHT EXCEPTION:")
+    print(f"Type: {exc_type}")
+    print(f"Value: {exc_value}")
+    traceback.print_tb(exc_traceback)
+    print("="*50)
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+sys.excepthook = global_excepthook
 
 class AirPaintingApp:
     def __init__(self):
@@ -98,6 +109,11 @@ class AirPaintingApp:
         self.voice_active = False
         self.voice_thread = None
 
+        # 语音显示特效状态
+        self.voice_display_text = ""
+        self.voice_display_timer = 0
+        self.voice_visual_flash = 0  # 视觉闪烁特效计时器
+        self.voice_command_executed = False  # 是否刚刚执行了命令（用于触发特效）
 
         # 新增特效状态
         self.active_effect = None
@@ -133,8 +149,6 @@ class AirPaintingApp:
             # 使用SuppressStderr屏蔽MediaPipe初始化时的底层日志
             with SuppressStderr():
                 self.gesture_detector = GestureDetector(model_path)
-
-            # self.face_detector = FaceDetector()
 
 
             # 初始化画布管理器
@@ -185,19 +199,36 @@ class AirPaintingApp:
                 os.makedirs(directory)
                 print(f"创建目录: {directory}")
 
+    # def handle_events(self):
+    #     """处理Pygame事件"""
+    #     for event in pygame.event.get():
+    #         if event.type == pygame.QUIT:
+    #             self.running = False
+    #
+    #             # 处理对话框事件
+    #         if self.dialog_manager.is_active():
+    #             handled = self.dialog_manager.handle_event(event)
+    #             if handled:
+    #                 return  # 如果对话框处理了事件，跳过其他处理
+    #
+    #         elif event.type == pygame.KEYDOWN:
+    #             self.handle_keyboard(event.key)
     def handle_events(self):
         """处理Pygame事件"""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
 
-                # 处理对话框事件
+            # 核心修复1：先传递事件给对话框，不直接return
+            dialog_handled = False
             if self.dialog_manager.is_active():
-                handled = self.dialog_manager.handle_event(event)
-                if handled:
-                    return  # 如果对话框处理了事件，跳过其他处理
+                dialog_handled = self.dialog_manager.handle_event(event)
+                # 即使对话框处理了事件，也要继续处理TEXTINPUT（输入框需要）
+                if dialog_handled and event.type not in [pygame.TEXTINPUT, pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN]:
+                    continue  # 仅跳过非输入类事件
 
-            elif event.type == pygame.KEYDOWN:
+            # 核心修复2：非对话框激活时处理键盘
+            if not self.dialog_manager.is_active() and event.type == pygame.KEYDOWN:
                 self.handle_keyboard(event.key)
 
     def handle_keyboard(self, key):
@@ -263,12 +294,17 @@ class AirPaintingApp:
             print(f"保存失败: {e}")
             self.is_paused = False
 
-    def on_dialog_finished(self, convert_art, style=None):
+    def on_dialog_finished(self, convert_art, style=None, prompt=None):
         """对话框完成回调"""
+
+        print("✅ 成功收到：")
+        print("style =", style)
+        print("prompt =", prompt)
+
         # 恢复手势识别
         self.is_paused = False
 
-        if convert_art and style:
+        if convert_art:
             # 创建新任务
             filename = f"assets/saved_drawings/{self.dialog_manager.saved_filename}.png"
             
@@ -277,6 +313,7 @@ class AirPaintingApp:
                 "filename": self.dialog_manager.saved_filename,
                 "full_path": filename,
                 "style": style,
+                "prompt": prompt,
                 "progress": 0,
                 "status": "等待处理...",
                 "thumbnail": None,
@@ -328,6 +365,7 @@ class AirPaintingApp:
         """执行单个艺术生成任务"""
         filename = task["full_path"]
         style = task["style"]
+        prompt = task["prompt"]
         
         try:
             # 定义进度回调
@@ -340,8 +378,10 @@ class AirPaintingApp:
                 doodle_img, 
                 num_creations=1, 
                 style=style,
+                prompt=prompt,
                 progress_callback=progress_callback
             )
+
             # 获取保存的路径，不显示plt窗口
             saved_paths = converter.save_and_display_results(processed_doodle, creations, show_plot=False)
             print(f"艺术化转换完成，风格: {style}")
@@ -350,7 +390,7 @@ class AirPaintingApp:
             task["progress"] = 100
             task["finished"] = True
             task["remove_time"] = time.time() + 5 # 5秒后消失
-            
+
             # 将结果路径存入任务对象，供主线程显示
             if saved_paths and saved_paths.get('creations'):
                 task["result_paths"] = {
@@ -448,7 +488,7 @@ class AirPaintingApp:
             print(f"手势命令: {gesture_name} -> {result.message}")
 
 
-            if gesture_name == "Victory" and not self.is_paused:
+            if gesture_name == "Victory" and not self.is_paused and not self.dialog_manager.is_active():
                 self.save_drawing_with_dialog()
 
 
@@ -577,6 +617,14 @@ class AirPaintingApp:
             "- S: 保存画布",
             "- 1-4: 切换颜色",
             "- +/-: 调整大小",
+             "-------------",
+            "语音指令:",
+            "  说'保存'等: 保存",
+            "  说'清空'等: 清空",
+            "  说'红色/蓝色'等: 换色",
+            "  说'大点/小点'等: 粗细",
+            "  说'撤销'等: 撤销",
+            "  说'暂停/恢复'等: 控制",
             "-------------",
             "一次最多显示三个任务"
         ]
@@ -591,7 +639,6 @@ class AirPaintingApp:
             for _, (icon_surface, pos) in self.gesture_icons_data.items():
                 self.screen.blit(icon_surface, pos)
 
-
         # 绘制状态信息
         gesture_map = {
             "Pointing_Up": "上指(绘画)",
@@ -604,10 +651,45 @@ class AirPaintingApp:
             "None": "无"
         }
         display_gesture = gesture_map.get(self.current_gesture, self.current_gesture or "无")
-        
-        status_text = f"状态: {'绘画中' if self.drawing_active else '待机'} | 手势: {display_gesture}"
+
+        status_text = f"状态: {'绘画中' if self.drawing_active else '待机'} | 手势: {self.current_gesture or '无'}"
         status_surface = self.small_font.render(status_text, True, self.colors['text'])
         self.screen.blit(status_surface, (20, self.camera_height + 40))
+
+        # 绘制语音命令面板
+        # if self.voice_active:
+        #      self.draw_voice_panel()
+
+        # 绘制语音动态显示文本
+        current_time = time.time()
+        # 1. 绘制识别结果及视觉反馈
+        if self.voice_display_text and current_time - self.voice_display_timer < 3.0:  # 显示3秒
+            # 计算文字宽度及背景
+            text_surf = self.font.render(f"语音: {self.voice_display_text}", True, (255, 255, 255))
+            padding = 10
+            width = text_surf.get_width() + padding * 2
+            height = text_surf.get_height() + padding * 2
+
+            # 显示在屏幕顶部中间略下方
+            x = (self.screen_width - width) // 2
+            y = 80
+
+            # 动态背景（正在识别时为黄色，识别完成为绿色）
+            # 由于没有is_listening状态，这里简单用时间判断
+            bg_color = (0, 180, 0, 180)  # 绿色半透明
+
+            # 绘制圆角背景
+            s = pygame.Surface((width, height), pygame.SRCALPHA)
+            pygame.draw.rect(s, bg_color, (0, 0, width, height), border_radius=10)
+            self.screen.blit(s, (x, y))
+            self.screen.blit(text_surf, (x + padding, y + padding))
+
+        # 2. 绘制命令触发时的全屏闪烁特效
+        if current_time - self.voice_visual_flash < 0.2:  # 闪烁持续0.2秒
+            overlay = pygame.Surface((self.screen_width, self.screen_height), pygame.SRCALPHA)
+            color = (50, 255, 50, 100) if self.voice_command_executed else (100, 100, 255, 60)
+            overlay.fill(color)
+            self.screen.blit(overlay, (0, 0))
 
         # 绘制艺术生成任务列表
         # 检查是否有任务需要显示结果
@@ -617,10 +699,10 @@ class AirPaintingApp:
                 self.dialog_manager.show_art_result(
                     task["result_paths"]["original"],
                     task["result_paths"]["generated"],
-                    task["style"]
+                    task["prompt"]
                 )
                 task["needs_display"] = False # 标记为已显示
-        
+
         # 清理已完成并超时的任务
         current_time = time.time()
         self.processing_tasks = [t for t in self.processing_tasks if not (t["finished"] and current_time > t["remove_time"])]
@@ -721,108 +803,513 @@ class AirPaintingApp:
             self.dialog_manager.draw(self.screen)
             pygame.display.flip()  # 确保对话框立即显示
 
-    def handle_doodle_create(self, filename, style):
-        """处理涂鸦艺术化转换"""
-        try:
-            converter = DoodleToArtConverter()
-            doodle_img = Image.open(filename)
-            creations, processed_doodle = converter.auto_generate_from_doodle(doodle_img, num_creations=1, style=style)
-            converter.save_and_display_results(processed_doodle, creations)
-            print(f"艺术化转换完成，风格: {style}")
-        except Exception as e:
-            print(f"艺术化转换失败: {e}")
-
     # 在main.py中完善语音命令处理函数
-    def handle_voice_command(self, text, start_time, end_time):
-        """统一处理语音命令"""
-        text = text.lower().strip()
+    # def handle_voice_command(self, text, start_time, end_time, is_final=True):
+    #     """统一处理语音命令"""
+    #     if text is None:
+    #         return
+    #
+    #     # 更新显示文本
+    #     self.voice_display_text = text
+    #     self.voice_display_timer = time.time()
+    #
+    #     # 只有在最终结果时才进行命令处理
+    #     if not is_final:
+    #         return
+    #
+    #     text = text.lower().strip()
+    #     command_found = False
+    #
+    #     state = self.dialog_manager.state
+    #     # 将语音输入根据输入框状态分为4种情况
+    #     if state == DialogState.INACTIVE:
+    #         event = {}
+    #         # 控制类命令
+    #         if any(cmd in text for cmd in ["保存", "存下来", "保存画布"]):
+    #             self.save_drawing_with_dialog()
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["暂停", "停止", "等一下"]):
+    #             self.is_paused = True
+    #             print("系统已暂停")
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["恢复", "继续", "开始"]):
+    #             self.is_paused = False
+    #             print("系统已恢复")
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["清空", "清除", "重置"]):
+    #             self.canvas_manager.clear_canvas()
+    #             print("画布已清空")
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["撤销", "回退", "上一步"]):
+    #             self.canvas_manager.undo()
+    #             print("已撤销")
+    #             command_found = True
+    #
+    #         # 笔刷控制
+    #         elif "红色" in text:
+    #             self.brush_engine.change_color('red')
+    #             print("笔刷切换为红色")
+    #             command_found = True
+    #         elif "蓝色" in text:
+    #             self.brush_engine.change_color('blue')
+    #             print("笔刷切换为蓝色")
+    #             command_found = True
+    #         elif "绿色" in text:
+    #             self.brush_engine.change_color('green')
+    #             print("笔刷切换为绿色")
+    #             command_found = True
+    #         elif "黑色" in text:
+    #             self.brush_engine.change_color('black')
+    #             print("笔刷切换为黑色")
+    #             command_found = True
+    #
+    #         # 笔刷大小
+    #         elif any(cmd in text for cmd in ["大点", "粗点", "增大" , "变大" , "变粗"]):
+    #             current = self.brush_engine.brush.size
+    #             self.brush_engine.change_size(min(50, current + 5))
+    #             print(f"笔刷增大到 {self.brush_engine.brush.size}")
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["小点", "细点", "减小" , "变小" , "变细"]):
+    #             current = self.brush_engine.brush.size
+    #             self.brush_engine.change_size(max(1, current - 5))
+    #             print(f"笔刷减小到 {self.brush_engine.brush.size}")
+    #             command_found = True
+    #
+    #     elif state == DialogState.SAVE_CONFIRM:
+    #         event = {}
+    #         if any(cmd in text for cmd in ["保存", "存下来", "保存画布","确定","确认"]):
+    #             event["result"] = "OK"
+    #             print("确定保存")
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+    #             event["result"] = 'CANCEL'
+    #             print("保存已取消")
+    #             command_found = True
+    #         self.dialog_manager.handle_event(event)
+    #
+    #     elif state == DialogState.PROMPT_INPUT:
+    #         event = {}
+    #
+    #         if any(cmd in text for cmd in ["保存", "存下来", "确定", "确认"]):
+    #             event["result"] = "OK"
+    #             print("确定保存")
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+    #             event["result"] = 'CANCEL'
+    #             print("保存已取消")
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["清空", "全部删除"]):
+    #             # if hasattr(self.dialog_manager.current_dialog, "input_text"):
+    #             #     self.dialog_manager.current_dialog.clear_text()
+    #             event["result"] = 'CLEAR'
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["删除", "回退"]):
+    #             # if hasattr(self.dialog_manager.current_dialog, "input_text"):
+    #             #     self.dialog_manager.current_dialog.back_text()
+    #             event["result"] = 'BACKSPACE'
+    #             command_found = True
+    #         else:
+    #             event["result"] = 'INPUT'
+    #             event["content"] = text
+    #
+    #             # 只有非命令文本才作为输入
+    #             if not command_found:
+    #                 # 将输入视为成功动作，触发特效
+    #                 self.trigger_voice_feedback(is_command=False)
+    #
+    #         self.dialog_manager.handle_event(event)
+    #
+    #     # elif state == DialogState.STYLE_SELECT:
+    #     #     event = {}
+    #     #     if any(cmd in text for cmd in ["diy", "自定义"]):
+    #     #         # 语音直接选择DIY
+    #     #         if hasattr(self.dialog_manager.current_dialog, 'result'):
+    #     #             self.dialog_manager.current_dialog.result = "DIY"
+    #     #         event["result"] = "OK"
+    #     #         print("语音选择: 自定义")
+    #     #         self.dialog_manager.handle_event(event)
+    #     #         command_found = True
+    #     #     elif any(cmd in text for cmd in ["保存", "存下来", "确定", "确认"]):
+    #     #         event["result"] = "OK"
+    #     #         print("确定保存")
+    #     #         self.dialog_manager.handle_event(event)
+    #     #         command_found = True
+    #     #     elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+    #     #         event["result"] = 'CANCEL'
+    #     #         print("保存已取消")
+    #     #         self.dialog_manager.handle_event(event)
+    #     #         command_found = True
+    #     elif state == DialogState.STYLE_SELECT:
+    #         event = {}
+    #         # 1. 语音直接选择具体风格（匹配风格列表）
+    #         style_map = {
+    #             "油画": "masterpiece oil painting",
+    #             "水彩": "beautiful watercolor art",
+    #             "数字艺术": "professional digital artwork",
+    #             "概念艺术": "fantasy concept art",
+    #             "线描": "minimalist line art",
+    #             "超现实": "surreal dreamlike painting",
+    #             "水墨画": "elegant ink drawing",
+    #             "校园风": "school style",
+    #         }
+    #         selected_style = None
+    #         for chinese, english in style_map.items():
+    #             if chinese in text or english.lower() in text:
+    #                 selected_style = english
+    #                 break
+    #
+    #         if selected_style:
+    #             # 直接选中风格并确认
+    #             if hasattr(self.dialog_manager.current_dialog, 'selected_option'):
+    #                 self.dialog_manager.current_dialog.selected_option = selected_style
+    #             event["result"] = "OK"
+    #             print(f"语音选择风格: {selected_style}")
+    #             self.dialog_manager.handle_event(event)
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["diy", "自定义"]):
+    #         # 语音直接选择DIY
+    #             if hasattr(self.dialog_manager.current_dialog, 'result'):
+    #                 self.dialog_manager.current_dialog.result = "DIY"
+    #             event["result"] = "OK"
+    #             print("语音选择: 自定义")
+    #             self.dialog_manager.handle_event(event)
+    #             command_found = True
+    #         # 2. 语音确认当前选中的风格
+    #         elif any(cmd in text for cmd in ["保存", "存下来", "确定", "确认"]):
+    #             event["result"] = "OK"
+    #             print("确认选择风格")
+    #             self.dialog_manager.handle_event(event)
+    #             command_found = True
+    #         # 3. 语音取消
+    #         elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+    #             event["result"] = 'CANCEL'
+    #             print("取消风格选择")
+    #             self.dialog_manager.handle_event(event)
+    #             command_found = True
+    #
+    #     elif state == DialogState.STYLE_INPUT:
+    #         event = {}
+    #         # event["result"] = 'None'
+    #         # event["content"] = text
+    #         if any(cmd in text for cmd in ["保存", "存下来", "确定", "确认"]):
+    #             event["result"] = "OK"
+    #             print("确定保存")
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+    #             event["result"] = 'CANCEL'
+    #             print("保存已取消")
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["清空","全部删除"]):
+    #             # if hasattr(self.dialog_manager.current_dialog,"input_text"):
+    #             #     self.dialog_manager.current_dialog.clear_text()
+    #             #     command_found = True
+    #             event["result"] = 'CLEAR'
+    #             command_found = True
+    #         elif any(cmd in text for cmd in ["删除","回退"]):
+    #             # if hasattr(self.dialog_manager.current_dialog,"input_text"):
+    #             #     self.dialog_manager.current_dialog.back_text()
+    #             #     command_found = True
+    #             event["result"] = 'BACKSPACE'
+    #             command_found = True
+    #         else:
+    #             event["result"] = 'INPUT'
+    #             event["content"] = text
+    #             # 只有非命令文本才作为输入
+    #             if not command_found:
+    #                 # 将输入视为成功动作，触发特效
+    #                 self.trigger_voice_feedback(is_command=False)
+    #
+    #         self.dialog_manager.handle_event(event)
+    #
+    #     # 如果识别到有效命令，触发反馈
+    #     if command_found:
+    #         self.trigger_voice_feedback(is_command=True)
+    def handle_voice_command(self, text, start_time, end_time, is_final=True):
+        """统一处理语音命令（防崩溃版）"""
+        import threading
+        print(f"[Voice] Current thread: {threading.current_thread().name}", flush=True)
+
         if text is None:
             return
 
+        # 更新显示文本
+        self.voice_display_text = text
+        self.voice_display_timer = time.time()
+
+        # 只有在最终结果时才进行命令处理
+        if not is_final:
+            return
+
+        text = text.lower().strip()
+        command_found = False
+
         state = self.dialog_manager.state
-        # 将语音输入根据输入框状态分为4种情况
-        if state == DialogState.INACTIVE:
-            # 控制类命令
-            if any(cmd in text for cmd in ["保存", "存下来", "保存画布"]):
-                self.save_drawing_with_dialog()
-            elif any(cmd in text for cmd in ["暂停", "停止", "等一下"]):
-                self.is_paused = True
-                print("系统已暂停")
-            elif any(cmd in text for cmd in ["恢复", "继续", "开始"]):
-                self.is_paused = False
-                print("系统已恢复")
-            elif any(cmd in text for cmd in ["清空", "清除", "重置"]):
-                self.canvas_manager.clear_canvas()
-                print("画布已清空")
-            elif any(cmd in text for cmd in ["撤销", "回退", "上一步"]):
-                self.canvas_manager.undo()
-                print("已撤销")
+        event = {}  # 初始化空事件
 
-            # 笔刷控制
-            elif "红色" in text:
-                self.brush_engine.change_color('red')
-                print("笔刷切换为红色")
-            elif "蓝色" in text:
-                self.brush_engine.change_color('blue')
-                print("笔刷切换为蓝色")
-            elif "绿色" in text:
-                self.brush_engine.change_color('green')
-                print("笔刷切换为绿色")
-            elif "黑色" in text:
-                self.brush_engine.change_color('black')
-                print("笔刷切换为黑色")
+        try:
+            print(f"[Voice] state={state}, text='{text}'")
+            # 将语音输入根据输入框状态分为4种情况
+            if state == DialogState.INACTIVE:
+                # 控制类命令
+                if any(cmd in text for cmd in ["保存", "存下来", "保存画布"]):
+                    self.save_drawing_with_dialog()
+                    command_found = True
 
-            # 笔刷大小
-            elif any(cmd in text for cmd in ["大点", "粗点", "增大" , "变大" , "变粗"]):
-                current = self.brush_engine.brush.size
-                self.brush_engine.change_size(min(50, current + 5))
-                print(f"笔刷增大到 {self.brush_engine.brush.size}")
-            elif any(cmd in text for cmd in ["小点", "细点", "减小" , "变小" , "变细"]):
-                current = self.brush_engine.brush.size
-                self.brush_engine.change_size(max(1, current - 5))
-                print(f"笔刷减小到 {self.brush_engine.brush.size}")
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["暂停", "停止", "等一下"]):
+                    self.is_paused = True
+                    print("系统已暂停")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["恢复", "继续", "开始"]):
+                    self.is_paused = False
+                    print("系统已恢复")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["清空", "清除", "重置"]):
+                    self.canvas_manager.clear_canvas()
+                    print("画布已清空")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["撤销", "回退", "上一步"]):
+                    self.canvas_manager.undo()
+                    print("已撤销")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
 
-        elif state == DialogState.SAVE_CONFIRM:
-            event = {}
-            if any(cmd in text for cmd in ["保存", "存下来", "保存画布","确定","确认"]):
-                event["result"] = "OK"
-                print("确定保存")
-            elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
-                event["result"] = 'CANCEL'
-                print("保存已取消")
-            self.dialog_manager.handle_event(event)
+                # 笔刷控制
+                elif "红色" in text:
+                    self.brush_engine.change_color('red')
+                    print("笔刷切换为红色")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif "蓝色" in text:
+                    self.brush_engine.change_color('blue')
+                    print("笔刷切换为蓝色")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif "绿色" in text:
+                    self.brush_engine.change_color('green')
+                    print("笔刷切换为绿色")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif "黑色" in text:
+                    self.brush_engine.change_color('black')
+                    print("笔刷切换为黑色")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
 
-        elif state == DialogState.STYLE_SELECT:
-            event = {}
-            if any(cmd in text for cmd in ["保存", "存下来", "保存画布", "确定", "确认"]):
-                event["result"] = "OK"
-                print("确定保存")
-            elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
-                event["result"] = 'CANCEL'
-                print("保存已取消")
-            self.dialog_manager.handle_event(event)
+                # 笔刷大小
+                elif any(cmd in text for cmd in ["大点", "粗点", "增大", "变大", "变粗"]):
+                    current = self.brush_engine.brush.size
+                    self.brush_engine.change_size(min(50, current + 5))
+                    print(f"笔刷增大到 {self.brush_engine.brush.size}")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["小点", "细点", "减小", "变小", "变细"]):
+                    current = self.brush_engine.brush.size
+                    self.brush_engine.change_size(max(1, current - 5))
+                    print(f"笔刷减小到 {self.brush_engine.brush.size}")
+                    command_found = True
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                return
 
-        elif state == DialogState.STYLE_DIY:
-            event = {}
-            event["result"] = 'None'
-            event["content"] = text
-            if any(cmd in text for cmd in ["保存", "存下来", "保存画布","确定","确认"]):
-                event["result"] = "OK"
-                print("确定保存")
-            elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
-                event["result"] = 'CANCEL'
-                print("保存已取消")
-            elif any(cmd in text for cmd in ["清空","全部删除"]):
-                if hasattr(self.dialog_manager.current_dialog,"input_text"):
-                    self.dialog_manager.current_dialog.clear_text()
-            elif any(cmd in text for cmd in ["删除","回退"]):
-                if hasattr(self.dialog_manager.current_dialog,"input_text"):
-                    self.dialog_manager.current_dialog.back_text()
+            elif state == DialogState.SAVE_CONFIRM:
+                if any(cmd in text for cmd in ["保存", "存下来", "保存画布", "确定", "确认"]):
+                    event["result"] = "OK"
+                    print("确定保存")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    print("[Voice] Returned from dialog_manager, now returning")
+                    return
+                elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+                    event["result"] = 'CANCEL'
+                    print("保存已取消")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                return
+
+            elif state == DialogState.PROMPT_INPUT:
+                if any(cmd in text for cmd in ["保存", "存下来", "确定", "确认"]):
+                    event["result"] = "OK"
+                    print("确定保存")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    print("[Voice] Returned from dialog_manager, now returning")
+                    return
+                elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+                    event["result"] = 'CANCEL'
+                    print("保存已取消")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["清空", "全部删除"]):
+                    event["result"] = 'CLEAR'
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["删除", "回退"]):
+                    event["result"] = 'BACKSPACE'
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                else:
+                    event["result"] = 'INPUT'
+                    event["content"] = text
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+            elif state == DialogState.STYLE_SELECT:
+                # 1. 语音直接选择具体风格（匹配风格列表）
+                style_map = {
+                    "油画": "masterpiece oil painting",
+                    "水彩": "beautiful watercolor art",
+                    "数字艺术": "professional digital artwork",
+                    "概念艺术": "fantasy concept art",
+                    "线描": "minimalist line art",
+                    "超现实": "surreal dreamlike painting",
+                    "水墨画": "elegant ink drawing",
+                    "校园风": "school style",
+                }
+                selected_style = None
+                for chinese, english in style_map.items():
+                    if chinese in text or english.lower() in text:
+                        selected_style = english
+                        break
+
+                if selected_style:
+                    # 直接选中风格并确认
+                    if hasattr(self.dialog_manager, 'current_dialog') and self.dialog_manager.current_dialog:
+                        if hasattr(self.dialog_manager.current_dialog, 'selected_option'):
+                            # 找到风格对应的索引
+                            for idx, opt in enumerate(self.dialog_manager.current_dialog.options):
+                                if opt == selected_style:
+                                    self.dialog_manager.current_dialog.selected_option = idx
+                                    self.dialog_manager.current_dialog.result = selected_style
+                                    break
+                    event["result"] = "OK"
+                    print(f"语音选择风格: {selected_style}")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["diy", "自定义"]):
+                    # 语音直接选择DIY
+                    if hasattr(self.dialog_manager, 'current_dialog') and self.dialog_manager.current_dialog:
+                        if hasattr(self.dialog_manager.current_dialog, 'result'):
+                            self.dialog_manager.current_dialog.result = "自定义"
+                    event["result"] = "OK"
+                    print("语音选择: 自定义")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                # 2. 语音确认当前选中的风格
+                elif any(cmd in text for cmd in ["保存", "存下来", "确定", "确认"]):
+                    event["result"] = "OK"
+                    print("确认选择风格")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                # 3. 语音取消
+                elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+                    event["result"] = 'CANCEL'
+                    print("取消风格选择")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                return
+
+            elif state == DialogState.STYLE_INPUT:
+                if any(cmd in text for cmd in ["保存", "存下来", "确定", "确认"]):
+                    event["result"] = "OK"
+                    print("确定保存")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    print("[Voice] Returned from dialog_manager, now returning")
+                    return
+                elif any(cmd in text for cmd in ["暂停", "停止", "取消"]):
+                    event["result"] = 'CANCEL'
+                    print("保存已取消")
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["清空", "全部删除"]):
+                    event["result"] = 'CLEAR'
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                elif any(cmd in text for cmd in ["删除", "回退"]):
+                    event["result"] = 'BACKSPACE'
+                    command_found = True
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+                else:
+                    event["result"] = 'INPUT'
+                    event["content"] = text
+                    self.dialog_manager.handle_event(event)
+                    self.trigger_voice_feedback(is_command=True)
+                    return
+
+            # # 安全处理事件：先判断对话框是否存在且激活
+            # if command_found and event and self.dialog_manager.is_active():
+            #     self.dialog_manager.handle_event(event)
+            #
+            #
+            # # 如果识别到有效命令，触发反馈
+            # if command_found:
+            #     self.trigger_voice_feedback(is_command=True)
+
+        except Exception as e:
+            # 捕获所有异常，避免崩溃
+            print(f"语音命令处理异常: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def trigger_voice_feedback(self, is_command=True):
+        """触发语音反馈特效"""
+        # 视觉特效：屏幕闪烁
+        self.voice_visual_flash = time.time()
+        self.voice_command_executed = is_command
+
+        # 音效反馈（简单beep）
+        try:
+            import winsound
+            if is_command:
+                # 成功识别命令：高频短音
+                winsound.Beep(1000, 150)
             else:
-                event["result"] = 'INPUT'
-            self.dialog_manager.handle_event(event)
-
-
+                # 普通输入：低频短音
+                winsound.Beep(800, 100)
+        except ImportError:
+            # 非Windows环境或模块缺失
+            pass
+        except Exception:
+            pass
 
     def toggle_voice_control(self):
         """切换语音控制状态"""
@@ -873,33 +1360,40 @@ class AirPaintingApp:
 
     def draw_voice_panel(self):
         """绘制语音控制面板"""
-        panel_x = self.screen_width - 450
-        panel_y = 20
+        panel_width = 320
+        panel_height = 200 # 初始高度，会根据内容调整
+        panel_x = self.screen_width - panel_width - 20
+        # 放在控制面板下方
+        panel_y = self.screen_height - panel_height - 200
 
-        # 语音面板背景
-        pygame.draw.rect(self.screen, (40, 40, 60),
-                         (panel_x, panel_y, 420, 180), border_radius=15)
+        # 语音面板背景 (深蓝色半透明)
+        s = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        pygame.draw.rect(s, (40, 40, 60, 230), (0, 0, panel_width, panel_height), border_radius=15)
+        self.screen.blit(s, (panel_x, panel_y))
 
         # 标题
-        title = self.font.render("语音控制面板", True, (220, 220, 255))
-        self.screen.blit(title, (panel_x + 20, panel_y + 10))
+        title = self.font.render(f"语音指令 [{'ON' if self.voice_active else 'OFF'}]", True, (100, 255, 100) if self.voice_active else (200, 100, 100))
+        self.screen.blit(title, (panel_x + 20, panel_y + 15))
 
 
         # 语音命令列表
-        y_offset = panel_y + 160
+        y_offset = panel_y + 50
         voice_commands = [
-            "🎤 说'保存' - 保存画布",
-            "🎨 说'画一个...' - 创意绘画",
-            "🔄 说'切换颜色' - 改变笔刷",
-            "📐 说'大一点' - 增大笔刷",
-            "🗑️ 说'清空' - 清除画布",
-            "⏸️ 说'暂停/恢复' - 控制系统"
+            "🎤 说 '保存' -> 保存当前画布",
+            "🎨 说 '红色/蓝色/黑色' -> 换色",
+            "📐 说 '大点/小点' -> 调整粗细",
+            "🗑️ 说 '清空' -> 清空画布",
+            "↩️ 说 '撤销' -> 撤销上一步",
+            "⏸️ 说 '暂停/恢复' -> 控制系统",
+            "💬 对话框: '确定/取消'"
         ]
 
         for i, cmd in enumerate(voice_commands):
-            text = self.small_font.render(cmd, True, (180, 180, 200))
-            self.screen.blit(text, (panel_x + 20, y_offset + i * 25))
-
+            # 将每一行稍微分开一点
+            color = (220, 220, 220) if i % 2 == 0 else (180, 180, 200)
+            text = self.small_font.render(cmd, True, color)
+            self.screen.blit(text, (panel_x + 20, y_offset))
+            y_offset += 22 #行高
 
     def run(self):
         """主循环"""
@@ -921,11 +1415,10 @@ class AirPaintingApp:
                 # 绘制对话框
                 self.dialog_manager.draw(self.screen)
 
-
                 pygame.display.flip()
-                
+
                 # DEBUG: 启动时直接显示对话框
-                self.debug_test_dialog()
+                # self.debug_test_dialog()
             else:
 
                 # 处理摄像头帧和手势识别
